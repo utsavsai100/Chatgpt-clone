@@ -13,8 +13,12 @@ export async function connectToDB() {
   }
 
   if (!cached.promise) {
-    const uri = process.env.MONGODB_URI!;
-    cached.promise = mongoose.connect(uri).then((mongoose) => mongoose);
+    const uri = "mongodb+srv://utsavtiwari398_db_user:axGVbzV1P5WlBtjE@gptcluster.i5fabke.mongodb.net/";
+    cached.promise = mongoose.connect(uri).then((mongoose) => {
+    console.log("✅ MongoDB Connected!");
+      return mongoose;
+    }
+    );
   }
 
   cached.conn = await cached.promise;
