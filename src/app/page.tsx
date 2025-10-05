@@ -6,19 +6,12 @@ import { useChat } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import { DefaultChatTransport } from "ai";
 import { FiSend, FiEdit3, FiBox } from "react-icons/fi";
+import Image from 'next/image';
 
-// Fallback ID generator (safe for all environments)
+// Fallback ID generator
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 10);
 }
-
-// Extend message parts to support images
-type ImagePart = {
-  type: "image_url";
-  image_url: { url: string };
-};
-
-type ExtendedPart = UIMessage["parts"][number] | ImagePart;
 
 export default function ChatPage() {
   const [input, setInput] = useState("");
@@ -37,12 +30,12 @@ export default function ChatPage() {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Handle scroll to show/hide scroll button
+  // Scroll button
   const handleScroll = useCallback(() => {
     if (messagesContainerRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = messagesContainerRef.current;
@@ -50,7 +43,6 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Attach scroll listener
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (container) {
@@ -59,13 +51,12 @@ export default function ChatPage() {
     }
   }, [handleScroll]);
 
-  // Scroll to bottom manually
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     setShowScrollButton(false);
   };
 
-  // Send text message
+  // Send message
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (status !== "ready" || !input.trim()) return;
@@ -73,12 +64,12 @@ export default function ChatPage() {
     setInput("");
   };
 
-  // Enter edit mode
+  // Edit message
   const handleEdit = (msg: UIMessage) => {
     if (msg.role !== "user") return;
 
     const currentText = msg.parts
-      .filter((part) => part.type === "text")
+      .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
       .map((part) => part.text)
       .join("\n");
 
@@ -86,7 +77,6 @@ export default function ChatPage() {
     setEditText(currentText);
   };
 
-  // Save edited message and regenerate
   const handleSaveEdit = async () => {
     if (!editingMessageId || !editText.trim()) {
       setEditingMessageId(null);
@@ -100,37 +90,43 @@ export default function ChatPage() {
     const nonTextParts = msgToEdit.parts.filter((part) => part.type !== "text");
     const updatedParts = [newTextPart, ...nonTextParts];
 
-    const updatedMsg: UIMessage = { ...msgToEdit, parts: updatedParts };
+    const updatedMsg = { ...msgToEdit, parts: updatedParts };
     setMessages(messages.map((m) => (m.id === editingMessageId ? updatedMsg : m)));
     setEditingMessageId(null);
-
     await regenerate();
   };
 
-  // Cancel editing
   const handleCancelEdit = () => {
     setEditingMessageId(null);
     setEditText("");
   };
 
-  // Render message parts (text + images)
-  const renderParts = (parts: ExtendedPart[]) => {
+  // Render parts (extract image from markdown)
+  const renderParts = (parts: UIMessage["parts"]) => {
     return parts.map((part, index) => {
       if (part.type === "text") {
+        // Check for image markdown: ![alt](url)
+        const imageUrlMatch = part.text.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
+        if (imageUrlMatch) {
+          const url = imageUrlMatch[1];
+          return (
+            <div key={index} className="whitespace-pre-wrap break-words">
+              <div className="mt-2">
+                <Image
+                  src={url}
+                  alt="Uploaded content"
+                  width={600}
+                  height={400}
+                  className="rounded-lg max-w-full h-auto border border-gray-200"
+                  unoptimized
+                />
+              </div>
+            </div>
+          );
+        }
         return (
           <div key={index} className="whitespace-pre-wrap break-words">
             {part.text}
-          </div>
-        );
-      }
-      if (part.type === "image_url") {
-        return (
-          <div key={index} className="mt-2">
-            <img
-              src={part.image_url.url}
-              alt="Uploaded content"
-              className="rounded-lg max-w-full h-auto border border-gray-200"
-            />
           </div>
         );
       }
@@ -154,20 +150,19 @@ export default function ChatPage() {
       const data = await res.json();
 
       if (data.success) {
-        const imageMessage: UIMessage = {
-          id: generateId(),
-          role: "user",
-          parts: [
-            { type: "text", text: "📷 Uploaded an image:" },
-            { type: "image_url", image_url: { url: data.url } },
-          ] as any,
-        };
-        setMessages([...messages, imageMessage]);
+        // Create markdown-style image text
+        const userMessageText = `![Uploaded image](${data.url})`;
 
-        await sendMessage({
-          text: "",
-          parts: [{ type: "image_url", image_url: { url: data.url } }] as any,
-        });
+        // Add to UI
+        const uiMessage = {
+          id: generateId(),
+          role: "user" as const,
+          parts: [{ type: "text" as const, text: userMessageText }],
+        };
+        setMessages([...messages, uiMessage]);
+
+        // Send ONLY text to AI SDK
+        await sendMessage({ text: userMessageText });
       } else {
         console.error("Upload failed", data.error);
       }
@@ -201,7 +196,7 @@ export default function ChatPage() {
         </div>
       )}
 
-      {/* Messages Container */}
+      {/* Messages */}
       <div
         ref={messagesContainerRef}
         className="flex-1 overflow-y-auto px-3 sm:px-4 py-2 sm:py-3 pb-24 md:pb-28"
@@ -213,10 +208,11 @@ export default function ChatPage() {
               className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
             >
               <div
-                className={`max-w-[90%] sm:max-w-[85%] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 md:px-5 md:py-4 min-h-fit ${msg.role === "user"
-                  ? "bg-blue-600 text-white rounded-tr-none"
-                  : "bg-gray-100 text-gray-800 rounded-tl-none"
-                  }`}
+                className={`max-w-[90%] sm:max-w-[85%] rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 md:px-5 md:py-4 min-h-fit ${
+                  msg.role === "user"
+                    ? "bg-blue-600 text-white rounded-tr-none"
+                    : "bg-gray-100 text-gray-800 rounded-tl-none"
+                }`}
               >
                 <div className="flex items-start gap-2 sm:gap-3">
                   {msg.role === "assistant" && (
@@ -227,7 +223,6 @@ export default function ChatPage() {
                   <div className="flex-1 min-w-0">
                     {msg.role === "user" ? (
                       editingMessageId === msg.id ? (
-                        // Editing Mode - Larger on medium+
                         <div className="flex flex-col gap-2">
                           <textarea
                             value={editText}
@@ -252,10 +247,9 @@ export default function ChatPage() {
                           </div>
                         </div>
                       ) : (
-                        // View Mode
                         <div className="flex items-start gap-2 sm:gap-3">
                           <div className="prose prose-xs sm:prose-sm md:prose-base whitespace-pre-wrap break-words min-w-0 flex-1">
-                            {renderParts(msg.parts as ExtendedPart[])}
+                            {renderParts(msg.parts)}
                           </div>
                           <button
                             onClick={() => handleEdit(msg)}
@@ -268,9 +262,8 @@ export default function ChatPage() {
                         </div>
                       )
                     ) : (
-                      // Assistant message
                       <div className="prose prose-xs sm:prose-sm md:prose-base whitespace-pre-wrap break-words">
-                        {renderParts(msg.parts as ExtendedPart[])}
+                        {renderParts(msg.parts)}
                       </div>
                     )}
                   </div>
@@ -278,19 +271,14 @@ export default function ChatPage() {
               </div>
             </div>
           ))}
-
           <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {/* Input Area - Responsive sizing */}
+      {/* Input Area */}
       <div className="sticky bottom-0 bg-white border-t border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 md:py-4">
         <div className="max-w-3xl mx-auto">
-          <form
-            onSubmit={handleSubmit}
-            className="flex items-end gap-2 sm:gap-3"
-          >
-            {/* Attach + Textarea */}
+          <form onSubmit={handleSubmit} className="flex items-end gap-2 sm:gap-3">
             <div className="flex items-center flex-1 gap-2">
               <input
                 type="file"
@@ -322,8 +310,6 @@ export default function ChatPage() {
                 disabled={status !== "ready"}
               />
             </div>
-
-            {/* Send Button */}
             <button
               type="submit"
               disabled={!input.trim() || status !== "ready"}
@@ -333,7 +319,6 @@ export default function ChatPage() {
               <FiSend size={18} className="sm:w-4.5 sm:h-4.5 md:w-5 md:h-5" />
             </button>
           </form>
-
           {status !== "ready" && (
             <p className="text-xs sm:text-sm text-gray-500 text-center mt-1 sm:mt-2 animate-pulse">
               Assistant is typing...
@@ -342,8 +327,7 @@ export default function ChatPage() {
         </div>
       </div>
 
-
-      {/* Scroll to Bottom Button */}
+      {/* Scroll Button */}
       {showScrollButton && (
         <button
           onClick={scrollToBottom}
